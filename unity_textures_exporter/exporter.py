@@ -1,78 +1,125 @@
 bl_info = {
     "name": "Export Unity Textures",
-    "author": "ChatGPT",
+    "author": "khazanovanastasia",
     "version": (1, 0),
     "blender": (2, 93, 0),
     "location": "3D View > Object > Export Unity Textures",
-    "description": "Экспортирует текстуры активного материала объекта в формате, пригодном для Unity",
+    "description": "Exports Principled BSDF textures as Unity-ready maps",
     "category": "Import-Export",
 }
 
 import bpy
 import os
-from bpy_extras.image_utils import load_image
 
-def export_textures(material, export_path):
-    if not material.use_nodes:
-        return
 
-    bsdf = None
+def find_principled_bsdf(material):
+    if not material or not material.use_nodes:
+        return None
     for node in material.node_tree.nodes:
         if node.type == 'BSDF_PRINCIPLED':
-            bsdf = node
-            break
+            return node
+    return None
 
+
+def save_image(image, export_path, material_name, suffix):
+    if not image:
+        return
+
+    filename = f"{material_name}_{suffix}.png"
+    filepath = os.path.join(export_path, filename)
+
+    image.filepath_raw = filepath
+    image.file_format = 'PNG'
+    image.save()
+    
+
+def get_linked_image(input_socket):
+    if not input_socket or not input_socket.is_linked:
+        return None
+
+    from_node = input_socket.links[0].from_node
+    if from_node.type == 'TEX_IMAGE':
+        return from_node.image
+
+    return None
+
+
+def get_normal_image(bsdf):
+    normal_input = bsdf.inputs.get("Normal")
+    if not normal_input or not normal_input.is_linked:
+        return None
+
+    normal_node = normal_input.links[0].from_node
+    if normal_node.type != 'NORMAL_MAP':
+        return None
+
+
+    color_input = normal_node.inputs.get("Color")
+    if not color_input or not color_input.is_linked:
+        return None
+
+
+    tex_node = color_input.links[0].from_node
+    if tex_node.type == 'TEX_IMAGE':
+        return tex_node.image
+
+    return None
+
+
+def export_unity_textures(material, export_path):
+    bsdf = find_principled_bsdf(material)
     if not bsdf:
         return
 
-    def save_image(image, suffix):
-        if not image:
-            return
-        filename = f"{material.name}_{suffix}.png"
-        filepath = os.path.join(export_path, filename)
-        image.filepath_raw = filepath
-        image.file_format = 'PNG'
-        image.save()
+    os.makedirs(export_path, exist_ok=True)
 
-    # Собираем основные текстуры
-    for input_name, suffix in {
-        "Base Color": "Albedo",
-        "Normal": "Normal",
-        "Metallic": "Metallic",
-        "Roughness": "Roughness",
-        "Specular": "Specular"
-    }.items():
-        link = bsdf.inputs.get(input_name)
-        if link and link.is_linked:
-            tex_node = link.links[0].from_node
-            if tex_node.type == 'TEX_IMAGE':
-                save_image(tex_node.image, suffix)
+    # Albedo 
+    albedo_img = get_linked_image(bsdf.inputs.get("Base Color"))
+    save_image(albedo_img, export_path, material.name, "Albedo")
 
+    # Normal
+    normal_img = get_normal_image(bsdf)
+    save_image(normal_img, export_path, material.name, "Normal")
+
+    # Metallic
+    metallic_img = get_linked_image(bsdf.inputs.get("Metallic"))
+    save_image(metallic_img, export_path, material.name, "Metallic")
+
+    # Roughness
+    roughness_img = get_linked_image(bsdf.inputs.get("Roughness"))
+    save_image(roughness_img, export_path, material.name, "Roughness")
+
+    # Specular
+    specular_img = get_linked_image(bsdf.inputs.get("Specular"))
+    save_image(specular_img, export_path, material.name, "Specular")
+    
+    
 class ExportUnityTexturesOperator(bpy.types.Operator):
     bl_idname = "object.export_unity_textures"
     bl_label = "Export Unity Textures"
     bl_options = {'REGISTER', 'UNDO'}
 
+
     directory: bpy.props.StringProperty(
         name="Export Path",
-        description="Куда сохранять текстуры",
+        description="Папка для экспорта текстур",
         subtype='DIR_PATH'
     )
 
     def execute(self, context):
         obj = context.active_object
         if not obj or not obj.active_material:
-            self.report({'WARNING'}, "Объект или материал не найден")
+            self.report({'WARNING'}, "Активный объект или материал не найден")
             return {'CANCELLED'}
 
-        export_textures(obj.active_material, self.directory)
+        export_unity_textures(obj.active_material, self.directory)
         self.report({'INFO'}, f"Текстуры экспортированы в {self.directory}")
         return {'FINISHED'}
 
     def invoke(self, context, event):
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
-
+    
 def menu_func(self, context):
     self.layout.operator(ExportUnityTexturesOperator.bl_idname)
 
