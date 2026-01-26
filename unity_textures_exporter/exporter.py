@@ -1,19 +1,16 @@
 bl_info = {
-    "name": "Export Unity Textures (Bake + Albedo/Normal/Metallic/Roughness/Specular)",
-    "author": "ChatGPT",
-    "version": (1, 2),
+    "name": "Export Unity Textures",
+    "author": "khazanovanastasia",
+    "version": (1, 0),
     "blender": (2, 93, 0),
     "location": "3D View > Object > Export Unity Textures",
-    "description": "Автоматически бейкает и экспортирует PBR-текстуры для Unity",
+    "description": "Exports Principled BSDF textures as Unity-ready maps",
     "category": "Import-Export",
 }
 
 import bpy
 import os
 
-# ------------------------------------------------------------
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-# ------------------------------------------------------------
 
 def find_principled_bsdf(material):
     if not material or not material.use_nodes:
@@ -24,94 +21,89 @@ def find_principled_bsdf(material):
     return None
 
 
-def create_bake_image(name, size):
-    img = bpy.data.images.new(name=name, width=size, height=size)
-    img.generated_color = (0, 0, 0, 1)
-    return img
+def save_image(image, export_path, material_name, suffix):
+    if not image:
+        return
 
+    filename = f"{material_name}_{suffix}.png"
+    filepath = os.path.join(export_path, filename)
 
-def save_image(image, export_path):
-    image.filepath_raw = os.path.join(export_path, image.name + ".png")
+    image.filepath_raw = filepath
     image.file_format = 'PNG'
     image.save()
+    
+
+def get_linked_image(input_socket):
+    if not input_socket or not input_socket.is_linked:
+        return None
+
+    from_node = input_socket.links[0].from_node
+    if from_node.type == 'TEX_IMAGE':
+        return from_node.image
+
+    return None
 
 
-def bake_socket(obj, material, bake_type, image_name, size, export_path):
-    # создаём изображение
-    image = bpy.data.images.new(image_name, width=size, height=size, alpha=False)
+def get_normal_image(bsdf):
+    normal_input = bsdf.inputs.get("Normal")
+    if not normal_input or not normal_input.is_linked:
+        return None
 
-    nodes = material.node_tree.nodes
-
-    # image texture node (ОБЯЗАТЕЛЬНО активный)
-    img_node = nodes.new(type='ShaderNodeTexImage')
-    img_node.image = image
-    nodes.active = img_node
-
-    # подготовка объекта
-    bpy.ops.object.select_all(action='DESELECT')
-    obj.select_set(True)
-    bpy.context.view_layer.objects.active = obj
-
-    # настройки Cycles
-    scene = bpy.context.scene
-    scene.render.engine = 'CYCLES'
-    scene.cycles.samples = 1
-
-    # настройки bake
-    scene.render.bake.use_clear = True
-    scene.render.bake.use_selected_to_active = False
-
-    # сам bake
-    bpy.ops.object.bake(type=bake_type)
-
-    # сохранение
-    image.filepath_raw = os.path.join(export_path, image_name + '.png')
-    image.file_format = 'PNG'
-    image.save()
-
-    # очистка
-    nodes.remove(img_node)
+    normal_node = normal_input.links[0].from_node
+    if normal_node.type != 'NORMAL_MAP':
+        return None
 
 
-# ------------------------------------------------------------
-# ОСНОВНАЯ ЛОГИКА ЭКСПОРТА
-# ------------------------------------------------------------
+    color_input = normal_node.inputs.get("Color")
+    if not color_input or not color_input.is_linked:
+        return None
 
-def export_unity_textures(obj, export_path, size=2048):
-    material = obj.active_material
+
+    tex_node = color_input.links[0].from_node
+    if tex_node.type == 'TEX_IMAGE':
+        return tex_node.image
+
+    return None
+
+
+def export_unity_textures(material, export_path):
     bsdf = find_principled_bsdf(material)
     if not bsdf:
         return
 
     os.makedirs(export_path, exist_ok=True)
 
-    bake_socket(obj, material, bsdf, "Albedo", 'DIFFUSE', size, export_path)
-    bake_socket(obj, material, bsdf, "Normal", 'NORMAL', size, export_path)
-    bake_socket(obj, material, bsdf, "Metallic", 'EMIT', size, export_path)
-    bake_socket(obj, material, bsdf, "Roughness", 'ROUGHNESS', size, export_path)
-    bake_socket(obj, material, bsdf, "Specular", 'GLOSSY', size, export_path)
+    # Albedo 
+    albedo_img = get_linked_image(bsdf.inputs.get("Base Color"))
+    save_image(albedo_img, export_path, material.name, "Albedo")
 
+    # Normal
+    normal_img = get_normal_image(bsdf)
+    save_image(normal_img, export_path, material.name, "Normal")
 
-# ------------------------------------------------------------
-# ОПЕРАТОР BLENDER
-# ------------------------------------------------------------
+    # Metallic
+    metallic_img = get_linked_image(bsdf.inputs.get("Metallic"))
+    save_image(metallic_img, export_path, material.name, "Metallic")
 
+    # Roughness
+    roughness_img = get_linked_image(bsdf.inputs.get("Roughness"))
+    save_image(roughness_img, export_path, material.name, "Roughness")
+
+    # Specular
+    specular_img = get_linked_image(bsdf.inputs.get("Specular"))
+    save_image(specular_img, export_path, material.name, "Specular")
+    
+    
 class ExportUnityTexturesOperator(bpy.types.Operator):
     bl_idname = "object.export_unity_textures"
-    bl_label = "Export Unity Textures (Bake)"
+    bl_label = "Export Unity Textures"
     bl_options = {'REGISTER', 'UNDO'}
+
 
     directory: bpy.props.StringProperty(
         name="Export Path",
         description="Папка для экспорта текстур",
         subtype='DIR_PATH'
-    )
-
-    texture_size: bpy.props.IntProperty(
-        name="Texture Size",
-        default=2048,
-        min=256,
-        max=8192
     )
 
     def execute(self, context):
@@ -120,32 +112,24 @@ class ExportUnityTexturesOperator(bpy.types.Operator):
             self.report({'WARNING'}, "Активный объект или материал не найден")
             return {'CANCELLED'}
 
-        export_unity_textures(obj, self.directory, self.texture_size)
-        self.report({'INFO'}, "Текстуры успешно запечены и экспортированы")
+        export_unity_textures(obj.active_material, self.directory)
+        self.report({'INFO'}, f"Текстуры экспортированы в {self.directory}")
         return {'FINISHED'}
 
     def invoke(self, context, event):
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
-
-
-# ------------------------------------------------------------
-# РЕГИСТРАЦИЯ
-# ------------------------------------------------------------
-
+    
 def menu_func(self, context):
     self.layout.operator(ExportUnityTexturesOperator.bl_idname)
-
 
 def register():
     bpy.utils.register_class(ExportUnityTexturesOperator)
     bpy.types.VIEW3D_MT_object.append(menu_func)
 
-
 def unregister():
     bpy.utils.unregister_class(ExportUnityTexturesOperator)
     bpy.types.VIEW3D_MT_object.remove(menu_func)
-
 
 if __name__ == "__main__":
     register()
