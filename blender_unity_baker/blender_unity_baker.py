@@ -1,13 +1,3 @@
-bl_info = {
-    "name": "Unity Texture Baker",
-    "author": "khazanovanastasia",
-    "version": (1, 3, 0),
-    "blender": (3, 0, 0),
-    "location": "View3D > Sidebar > Unity Baker",
-    "description": "Bake procedural materials and export textures for Unity (Blender 3.x - 5.x)",
-    "category": "Material",
-}
-
 import bpy
 import os
 from pathlib import Path
@@ -28,7 +18,6 @@ def create_image(name, width, height, alpha=False):
 
 
 def setup_image_node_in_material(material, image, active=True):
-    """Добавляет Image Texture нод в конкретный материал."""
     nodes = material.node_tree.nodes
     img_node = nodes.new(type='ShaderNodeTexImage')
     img_node.image = image
@@ -39,11 +28,6 @@ def setup_image_node_in_material(material, image, active=True):
 
 
 def setup_image_node_all_materials(obj, image):
-    """
-    Добавляет один и тот же Image Texture нод (с одним изображением)
-    во все материалы объекта и делает его активным в каждом.
-    Возвращает список добавленных нодов для последующего удаления.
-    """
     added_nodes = []
     for mat in obj.data.materials:
         if mat is None or not mat.use_nodes:
@@ -54,7 +38,6 @@ def setup_image_node_all_materials(obj, image):
 
 
 def remove_nodes(node_list):
-    """Удаляет список нодов вида [(material, node), ...]."""
     for mat, node in node_list:
         if mat and mat.use_nodes and node.name in mat.node_tree.nodes:
             mat.node_tree.nodes.remove(node)
@@ -81,9 +64,9 @@ def bake_map(obj, bake_type, image, samples=128):
 
     try:
         bpy.ops.object.bake(type=bake_type)
-        print(f"  ✓ Запекание {bake_type} завершено")
+        print(f"Запекание {bake_type} завершено")
     except Exception as e:
-        print(f"  ❌ Ошибка запекания {bake_type}: {str(e)}")
+        print(f"Ошибка запекания {bake_type}: {str(e)}")
 
     bpy.context.scene.view_settings.view_transform = original_view_transform
 
@@ -99,7 +82,7 @@ def save_image(image, filepath, file_format='PNG'):
         bpy.context.scene.render.image_settings.compression = 15
 
     image.save()
-    print(f"✓ Сохранено: {filepath}")
+    print(f"Сохранено: {filepath}")
 
 
 def pack_mrao_channels(metallic_path, roughness_path, ao_path, output_path):
@@ -119,16 +102,11 @@ def pack_mrao_channels(metallic_path, roughness_path, ao_path, output_path):
     mrao = Image.merge('RGBA', (metallic, roughness, ao, alpha))
     mrao.save(output_path)
 
-    print(f"✓ MRAO упакован: {output_path}")
+    print(f"MRAO упакован: {output_path}")
     return True
 
 
-# ---------------------------------------------------------------------------
-# Вспомогательные функции для запекания single-channel через Emission
-# ---------------------------------------------------------------------------
-
 def _get_principled_nodes(obj):
-    """Возвращает dict {material: principled_node} для всех материалов объекта."""
     result = {}
     for mat in obj.data.materials:
         if mat is None or not mat.use_nodes:
@@ -148,13 +126,9 @@ def _get_output_node(mat):
 
 
 def bake_single_channel_emit(obj, channel_name, target_img, samples):
-    """
-    Запекает один канал (Metallic или Roughness) через Emission trick
-    во всех материалах объекта одновременно.
-    """
+
     principled_map = _get_principled_nodes(obj)
 
-    # Сохраняем и подменяем output -> emission в каждом материале
     state_per_mat = []
     temp_nodes_per_mat = []
 
@@ -197,12 +171,10 @@ def bake_single_channel_emit(obj, channel_name, target_img, samples):
         state_per_mat.append((mat, nodes, links, output, original_surface_link))
         temp_nodes_per_mat.append((mat, nodes, temp_nodes))
 
-    # Добавляем image node во все материалы и запекаем
     img_nodes = setup_image_node_all_materials(obj, target_img)
     bake_map(obj, 'EMIT', target_img, samples)
     remove_nodes(img_nodes)
 
-    # Восстанавливаем все материалы
     for mat, nodes, links, output, original_surface_link in state_per_mat:
         if original_surface_link:
             links.new(original_surface_link, output.inputs['Surface'])
@@ -212,10 +184,6 @@ def bake_single_channel_emit(obj, channel_name, target_img, samples):
             if node.name in nodes:
                 nodes.remove(node)
 
-
-# ---------------------------------------------------------------------------
-# Главная функция запекания
-# ---------------------------------------------------------------------------
 
 def bake_unity_textures(obj, export_path, albedo_res=1024, normal_res=1024, mrao_res=1024,
                         samples=128, bake_albedo=True, bake_normal=True, bake_mrao=True):
@@ -246,7 +214,6 @@ def bake_unity_textures(obj, export_path, albedo_res=1024, normal_res=1024, mrao
     print(f"Samples: {samples}")
     print(f"{'='*60}\n")
 
-    # Убеждаемся, что все материалы используют ноды
     for mat in obj.data.materials:
         if mat and not mat.use_nodes:
             mat.use_nodes = True
@@ -254,11 +221,8 @@ def bake_unity_textures(obj, export_path, albedo_res=1024, normal_res=1024, mrao
     temp_images = {}
 
     try:
-        # ================================================================
-        # 1. ALBEDO (Base Color)
-        # ================================================================
         if bake_albedo:
-            print("🎨 Запекаем Albedo...")
+            print("Запекаем Albedo...")
             albedo_img = create_image(f"{obj_name}_Albedo", albedo_res, albedo_res, alpha=False)
             temp_images['albedo'] = albedo_img
 
@@ -269,14 +233,11 @@ def bake_unity_textures(obj, export_path, albedo_res=1024, normal_res=1024, mrao
             albedo_path = os.path.join(export_path, f"{obj_name}_Albedo.png")
             save_image(albedo_img, albedo_path)
         else:
-            print("⏭️ Пропускаем Albedo (отключено)")
+            print("Пропускаем Albedo (отключено)")
             albedo_path = None
 
-        # ================================================================
-        # 2. NORMAL MAP
-        # ================================================================
         if bake_normal:
-            print("🔵 Запекаем Normal Map...")
+            print("Запекаем Normal Map...")
             normal_img = create_image(f"{obj_name}_Normal", normal_res, normal_res, alpha=False)
             temp_images['normal'] = normal_img
 
@@ -287,40 +248,28 @@ def bake_unity_textures(obj, export_path, albedo_res=1024, normal_res=1024, mrao
             normal_path = os.path.join(export_path, f"{obj_name}_Normal.png")
             save_image(normal_img, normal_path)
         else:
-            print("⏭️ Пропускаем Normal Map (отключено)")
+            print("Пропускаем Normal Map (отключено)")
             normal_path = None
 
-        # ================================================================
-        # 3-5. MRAO (Metallic, Roughness, AO)
-        # ================================================================
         if not bake_mrao:
-            print("⏭️ Пропускаем MRAO (отключено)")
+            print("Пропускаем MRAO (отключено)")
             mrao_path = None
         else:
-            # ------------------------------------------------------------
-            # 3. METALLIC
-            # ------------------------------------------------------------
-            print("⚙️ Запекаем Metallic...")
+            print("Запекаем Metallic...")
             metallic_img = create_image(f"{obj_name}_Metallic", mrao_res, mrao_res, alpha=False)
             temp_images['metallic'] = metallic_img
             bake_single_channel_emit(obj, 'Metallic', metallic_img, samples)
             metallic_path = os.path.join(export_path, f"{obj_name}_Metallic_temp.png")
             save_image(metallic_img, metallic_path)
 
-            # ------------------------------------------------------------
-            # 4. ROUGHNESS
-            # ------------------------------------------------------------
-            print("🔘 Запекаем Roughness...")
+            print("Запекаем Roughness...")
             roughness_img = create_image(f"{obj_name}_Roughness", mrao_res, mrao_res, alpha=False)
             temp_images['roughness'] = roughness_img
             bake_single_channel_emit(obj, 'Roughness', roughness_img, samples)
             roughness_path = os.path.join(export_path, f"{obj_name}_Roughness_temp.png")
             save_image(roughness_img, roughness_path)
 
-            # ------------------------------------------------------------
-            # 5. AMBIENT OCCLUSION
-            # ------------------------------------------------------------
-            print("🌑 Запекаем Ambient Occlusion...")
+            print("Запекаем Ambient Occlusion...")
             ao_img = create_image(f"{obj_name}_AO", mrao_res, mrao_res, alpha=False)
             temp_images['ao'] = ao_img
 
@@ -331,10 +280,7 @@ def bake_unity_textures(obj, export_path, albedo_res=1024, normal_res=1024, mrao
             ao_path = os.path.join(export_path, f"{obj_name}_AO_temp.png")
             save_image(ao_img, ao_path)
 
-            # ------------------------------------------------------------
-            # 6. MRAO PACKING
-            # ------------------------------------------------------------
-            print("📦 Упаковываем MRAO...")
+            print("Упаковываем MRAO...")
             mrao_path = os.path.join(export_path, f"{obj_name}_MRAO.png")
 
             if pack_mrao_channels(metallic_path, roughness_path, ao_path, mrao_path):
@@ -344,7 +290,7 @@ def bake_unity_textures(obj, export_path, albedo_res=1024, normal_res=1024, mrao
 
         print(f"\n{'='*60}")
         print(f"✓ Запекание завершено успешно!")
-        print(f"📂 Файлы сохранены в: {export_path}")
+        print(f"Файлы сохранены в: {export_path}")
         if bake_albedo:
             print(f"  - {obj_name}_Albedo.png ({albedo_res}x{albedo_res})")
         if bake_normal:
@@ -356,7 +302,7 @@ def bake_unity_textures(obj, export_path, albedo_res=1024, normal_res=1024, mrao
         return {'FINISHED'}
 
     except Exception as e:
-        print(f"❌ Ошибка при запекании: {str(e)}")
+        print(f"Ошибка при запекании: {str(e)}")
         import traceback
         traceback.print_exc()
         return {'CANCELLED'}
@@ -597,22 +543,3 @@ classes = (
     UNITY_PT_BakerPanel,
 )
 
-
-def register():
-    for cls in classes:
-        bpy.utils.register_class(cls)
-
-    bpy.types.Scene.unity_baker_props = bpy.props.PointerProperty(type=UnityBakerProperties)
-    print("Unity Texture Baker зарегистрирован")
-
-
-def unregister():
-    for cls in reversed(classes):
-        bpy.utils.unregister_class(cls)
-
-    del bpy.types.Scene.unity_baker_props
-    print("Unity Texture Baker удален")
-
-
-if __name__ == "__main__":
-    register()

@@ -1,13 +1,3 @@
-bl_info = {
-    "name": "Export Unity Textures",
-    "author": "khazanovanastasia",
-    "version": (1, 0),
-    "blender": (2, 93, 0),
-    "location": "3D View > Object > Export Unity Textures",
-    "description": "Exports Principled BSDF textures as Unity-ready maps",
-    "category": "Import-Export",
-}
-
 import bpy
 import os
 
